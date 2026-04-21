@@ -1,11 +1,7 @@
 # Open Issues
 
-## Deferred weapon keywords
-- **Indirect Fire** — mostly no damage-calc effect; skip until needed.
-
 ## Keywords that make range assumptions (match librarian)
 - **Rapid Fire N**, **Melta N** assume half range (bonus always applied).
-- **Heavy** assumes the attacker was stationary.
 - **Lance** assumes the attacker charged.
 
 ## Deferred modeling
