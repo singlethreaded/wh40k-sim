@@ -61,7 +61,9 @@ class SimDefender:
 
 @dataclass
 class SimResult:
-    """Matches librarian.src.calc.unit_damage.UnitDamageResult field names.
+    """Superset of librarian.src.calc.unit_damage.UnitDamageResult: the same
+    fields with identical semantics, plus `n_iter` for reporting the Monte
+    Carlo trial count. `per_wound_through_dist` (Markov-internal) is omitted.
 
     `avg_damage` is capped by the defender's HP pool (spill-loss respected).
     `avg_damage_uncapped` ignores the cap — useful when comparing to a scalar

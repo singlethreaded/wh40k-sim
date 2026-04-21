@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wh40k-sim"
+version = "0.1.0"
+description = "Monte Carlo damage simulator for Warhammer 40,000 10th edition."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Chris Gerritz" }]
+keywords = ["warhammer", "40k", "wargaming", "monte-carlo", "simulation"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment :: Turn Based Strategy",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0"]
+
+[project.urls]
+Repository = "https://github.com/singlethreaded/wh40k-sim"
+
+[tool.setuptools.packages.find]
+include = ["wh40k_sim*"]
+exclude = ["tests*", "examples*", "old*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
