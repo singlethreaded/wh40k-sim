@@ -260,6 +260,53 @@ def test_fnp_reduces_effective_damage():
     assert abs(fnp_5.avg_damage / no_fnp.avg_damage - 2/3) < 0.05
 
 
+def test_fnp_mortal_applies_only_to_devastating_mortals():
+    """fnp_mortal shields Dev-Wounds mortals; normal unsaved wounds ignore it."""
+    # Weapon without Devastating: fnp_mortal must have no effect.
+    plain_w = mk_weapon(attacks="12", skill=3, strength=4, ap=0)
+    base    = run(plain_w, mk_defender(toughness=3, save=7))
+    plain_m = run(plain_w, mk_defender(toughness=3, save=7, fnp_mortal=5))
+    assert abs(plain_m.avg_damage - base.avg_damage) < TOL
+
+    # Weapon with Devastating: ~1/6 of wounds become mortals. fnp_mortal 5+ should
+    # save ~2/6 of those. Baseline fnp=0 means normals take full damage.
+    dev_w = mk_weapon(attacks="60", skill=3, strength=4, ap=0, keywords=["Devastating Wounds"])
+    d = mk_defender(toughness=3, save=7, unit_size=100)
+    no_fm   = run(dev_w, d)
+    with_fm = run(dev_w, mk_defender(toughness=3, save=7, unit_size=100, fnp_mortal=5))
+    # 60 hits → 60*4/6 = 40 wounds; 1/6 of those → 6.67 mortal, 33.33 normal.
+    # fnp_mortal 5+ saves 2/6 of mortals: 6.67 * 2/6 ≈ 2.22 shielded.
+    expected_drop = (40 * 1/6) * (2/6)
+    assert abs((no_fm.avg_damage - with_fm.avg_damage) - expected_drop) < 0.8
+
+
+def test_fnp_psychic_applies_only_when_weapon_is_psychic():
+    """fnp_psychic triggers only for weapons with the 'Psychic' keyword."""
+    d_psy = mk_defender(toughness=3, save=7, fnp_psychic=5)
+    # Non-psychic weapon: fnp_psychic should not fire.
+    non_psy = run(mk_weapon(attacks="12", skill=3, strength=4, ap=0), d_psy)
+    base    = run(mk_weapon(attacks="12", skill=3, strength=4, ap=0),
+                  mk_defender(toughness=3, save=7))
+    assert abs(non_psy.avg_damage - base.avg_damage) < TOL
+    # Psychic weapon: fnp_psychic 5+ ignores ~2/6 of damage.
+    psy = run(mk_weapon(attacks="12", skill=3, strength=4, ap=0, keywords=["Psychic"]), d_psy)
+    assert abs(psy.avg_damage / base.avg_damage - 2/3) < 0.05
+
+
+def test_fnp_best_of_baseline_and_mortal():
+    """When baseline fnp and fnp_mortal both set, mortals use the lower (better) value."""
+    # fnp=6 (saves 1/6) but fnp_mortal=4 (saves 3/6). Mortals should see 4+.
+    dev_w = mk_weapon(attacks="60", skill=3, strength=4, ap=0, keywords=["Devastating Wounds"])
+    d_both = mk_defender(toughness=3, save=7, unit_size=100, fnp=6, fnp_mortal=4)
+    d_only = mk_defender(toughness=3, save=7, unit_size=100, fnp=6)
+    r_both = run(dev_w, d_both)
+    r_only = run(dev_w, d_only)
+    # Mortal stream is ~6.67 damage; dropping its FNP from 6+ to 4+ saves an extra
+    # 6.67 * (3/6 - 1/6) = 6.67 * 2/6 ≈ 2.22
+    expected_drop = (40 * 1/6) * (2/6)
+    assert abs((r_only.avg_damage - r_both.avg_damage) - expected_drop) < 0.8
+
+
 def test_spill_loss_on_multiwound_overkill():
     """D6 damage into W1 models. Every unsaved wound still kills exactly one model."""
     r = run(mk_weapon(attacks="12", skill=3, strength=4, ap=0, damage="D6"),

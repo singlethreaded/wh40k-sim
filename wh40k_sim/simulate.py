@@ -8,7 +8,8 @@ damage → FNP → unit HP pool. Weapons share the HP pool so excess damage on t
 currently-wounded model is lost (10e spill-loss). No turn-phase sequencing.
 
 Keywords: Sustained Hits N, Lethal Hits, Devastating Wounds, Twin-linked,
-Anti-X N+, Torrent, Heavy, Lance, Rapid Fire N, Blast, Melta N, Ignores Cover.
+Anti-X N+, Torrent, Heavy, Lance, Rapid Fire N, Blast, Melta N, Ignores Cover,
+Psychic (routes FNP through fnp_psychic).
 Rapid Fire / Melta assume half range, Heavy assumes stationary, Lance assumes
 charging — matching librarian's calc/core.py.
 
@@ -47,7 +48,7 @@ def _wound_target(strength: int, toughness: int) -> int:
 
 
 def _find_kw(keywords: list[str], prefix: str) -> str | None:
-    return next((k for k in keywords if k.lower().startswith(prefix.lower())), None)
+    return next((k for k in keywords if k.startswith(prefix)), None)
 
 
 def _parse_trailing_int(kw: str | None) -> int:
@@ -56,6 +57,17 @@ def _parse_trailing_int(kw: str | None) -> int:
         return 0
     m = re.search(r"(\d+)", kw)
     return int(m.group(1)) if m else 0
+
+
+def _effective_fnp(defender: SimDefender, is_mortal: bool, is_psychic: bool) -> int:
+    """Best (lowest) FNP X+ across baseline / mortal / psychic pools that apply
+    to this damage source. Mirrors librarian core.py:_effective_fnp_value."""
+    fnp = defender.fnp
+    if is_mortal and defender.fnp_mortal > 0:
+        fnp = min(fnp, defender.fnp_mortal) if fnp > 0 else defender.fnp_mortal
+    if is_psychic and defender.fnp_psychic > 0:
+        fnp = min(fnp, defender.fnp_psychic) if fnp > 0 else defender.fnp_psychic
+    return fnp
 
 
 def _parse_trailing_expr(kw: str | None) -> str:
@@ -93,6 +105,8 @@ class _WeaponPlan:
     crit_wound_threshold: int      # default 6; Anti-X narrows it
     save_threshold: int            # 2..7; 7 means auto-fail saves
     damage_reduction: int          # per-wound damage minus this, floored at 1
+    fnp_normal: int                # FNP X+ applied to unsaved (non-mortal) wounds; 0 = none
+    fnp_mortal: int                # FNP X+ applied to Devastating mortal wounds; 0 = none
 
 
 def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
@@ -132,6 +146,8 @@ def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
             crit_wound_threshold = int(m.group(2))
             break
 
+    is_psychic = _find_kw(kws, "Psychic") is not None
+
     return _WeaponPlan(
         weapon=weapon,
         is_melee=is_melee,
@@ -150,6 +166,8 @@ def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
         save_threshold=save_threshold,
         damage_reduction=(defender.damage_reduction_melee if is_melee
                           else defender.damage_reduction_ranged),
+        fnp_normal=_effective_fnp(defender, is_mortal=False, is_psychic=is_psychic),
+        fnp_mortal=_effective_fnp(defender, is_mortal=True,  is_psychic=is_psychic),
     )
 
 
@@ -233,12 +251,15 @@ def _simulate_once(plans: list[_WeaponPlan], defender: SimDefender, rng: random.
                     unsaved += 1
 
         # --- Damage + FNP + HP pool ---
-        for _ in range(unsaved + devastating_mortals):
+        # Normal unsaved wounds use fnp_normal; Devastating mortals use fnp_mortal
+        # (baseline fnp overridden by the better of fnp_mortal/fnp_psychic when applicable).
+        for idx in range(unsaved + devastating_mortals):
+            fnp = p.fnp_mortal if idx >= unsaved else p.fnp_normal
             raw = roll_expr(w.damage, rng) + p.melta_bonus
             eff = max(1, raw - p.damage_reduction)                      # 10e: damage floors at 1
-            if defender.fnp > 0:
+            if fnp > 0:
                 # FNP applies per point of damage independently.
-                eff = sum(1 for _ in range(eff) if rng.randint(1, 6) < defender.fnp)
+                eff = sum(1 for _ in range(eff) if rng.randint(1, 6) < fnp)
             if eff <= 0:
                 continue
             uncapped_damage += eff
