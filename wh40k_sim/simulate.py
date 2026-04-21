@@ -146,7 +146,7 @@ def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
             crit_wound_threshold = int(m.group(2))
             break
 
-    is_psychic = _find_kw(kws, "Psychic") is not None
+    is_psychic = "Psychic" in kws          # exact match, mirrors librarian core.py:329
 
     return _WeaponPlan(
         weapon=weapon,

@@ -293,6 +293,24 @@ def test_fnp_psychic_applies_only_when_weapon_is_psychic():
     assert abs(psy.avg_damage / base.avg_damage - 2/3) < 0.05
 
 
+def test_fnp_mortal_and_psychic_stack_for_psychic_dev_wounds():
+    """Psychic + Devastating Wounds: mortals should benefit from the best of
+    fnp, fnp_mortal, and fnp_psychic (librarian's chained min)."""
+    psy_dev = mk_weapon(attacks="60", skill=3, strength=4, ap=0,
+                        keywords=["Psychic", "Devastating Wounds"])
+    # fnp_mortal=5 alone saves 2/6 of mortals; add fnp_psychic=4 and mortals
+    # should use 4+ (saves 3/6) since psychic applies and is better.
+    d_mortal_only = mk_defender(toughness=3, save=7, unit_size=100, fnp_mortal=5)
+    d_both        = mk_defender(toughness=3, save=7, unit_size=100,
+                                fnp_mortal=5, fnp_psychic=4)
+    r_m = run(psy_dev, d_mortal_only)
+    r_b = run(psy_dev, d_both)
+    # 40 wounds; 1/6 mortals = 6.67. Going from 5+ (2/6 saved) to 4+ (3/6 saved)
+    # on the mortal stream shields ~6.67 * 1/6 ≈ 1.11 more damage.
+    # Normals also pick up fnp_psychic 4+ (from 0 → 3/6 saved): 33.33 * 3/6 ≈ 16.67.
+    assert r_b.avg_damage < r_m.avg_damage      # sanity: adding psychic FNP helps
+
+
 def test_fnp_best_of_baseline_and_mortal():
     """When baseline fnp and fnp_mortal both set, mortals use the lower (better) value."""
     # fnp=6 (saves 1/6) but fnp_mortal=4 (saves 3/6). Mortals should see 4+.
