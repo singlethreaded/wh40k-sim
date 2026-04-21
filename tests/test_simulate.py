@@ -332,3 +332,68 @@ class TestBuildPlan:
             mk_defender(keywords=["Infantry"]),
         )
         assert plan.crit_wound_threshold == 4
+
+
+# --- regression fixes (PR #1 review feedback) ------------------------------
+
+def test_save_floors_at_two_plus_in_cover():
+    """Sv2+ + cover must not become 1+ (10e floors save at 2+). Regression for PR #1."""
+    d = mk_defender(toughness=4, save=2, unit_size=10, save_bonus_ranged=1)
+    # S4 AP-0 vs T4 (wound 4+, 3/6), hit 3+ (4/6), Sv2+cover → save floored at 2+ (fails 1/6)
+    r = run(mk_weapon(attacks="12", skill=3, strength=4, ap=0, damage="1"), d)
+    # 12 * 4/6 * 3/6 * 1/6 = 0.667 damage. Buggy (1+ save) would give ~0.
+    assert abs(r.avg_damage - 0.667) < TOL
+    assert r.avg_damage > 0.3     # sanity floor — save is not 1+
+
+
+def test_twin_linked_skipped_when_reroll_wounds_set():
+    """If the caller provides reroll_wounds='all', twin-linked must not double up.
+    Result should equal plain reroll_wounds='all' (no twin bonus on top)."""
+    d = mk_defender(toughness=4, save=7, unit_size=20)
+    reroll_only = run(mk_weapon(attacks="12", skill=3, strength=3, ap=0, reroll_wounds="all"), d)
+    reroll_twin = run(mk_weapon(attacks="12", skill=3, strength=3, ap=0, reroll_wounds="all",
+                                keywords=["Twin-linked"]), d)
+    assert abs(reroll_only.avg_damage - reroll_twin.avg_damage) < TOL
+
+
+def test_sustained_hits_d3_samples_dice():
+    """Sustained Hits D3 averages +2 hits per crit, not +3 (was deterministic before)."""
+    # 60 attacks. Hits per attack = P(non-crit hit)*1 + P(crit)*(1 + E[D3])
+    #   non-crit-hit prob = 3/6 (rolls 3,4,5), crit prob = 1/6 (roll 6), miss = 2/6.
+    #   = (3/6)*1 + (1/6)*(1+2) = 1.0 hit/attack → 60 hits.
+    # Wounds S4 vs T3 (3+, 4/6): 40. Sv7+: all go through → avg_damage ≈ 40.
+    # Buggy version (deterministic +3 instead of D3 sample): 1.167 hit/attack → 70 hits → 46.67 dmg.
+    w = mk_weapon(attacks="60", skill=3, strength=4, ap=0, damage="1", keywords=["Sustained Hits D3"])
+    d = mk_defender(toughness=3, save=7, unit_size=100)
+    r = run(w, d)
+    assert abs(r.avg_damage - 40.0) < 1.5           # D3 adds trial-to-trial variance
+    assert r.avg_damage < 44.0                       # clearly below the buggy +3 expectation
+
+
+def test_rapid_fire_and_blast_stack():
+    """Both keywords present → base_attacks + RF_n + unit_size//5, all times count."""
+    # A=2, count=3, RF2 → +2*3=6; Blast vs 15-unit → +3*3=9. Total = 6 + 6 + 9 = 21 attacks.
+    w = mk_weapon(attacks="2", skill=3, strength=4, ap=0, damage="1", count=3,
+                  keywords=["Rapid Fire 2", "Blast"])
+    d = mk_defender(toughness=3, save=7, unit_size=15)
+    r = run(w, d)
+    # 21 * 4/6 * 4/6 = 9.33
+    assert abs(r.avg_damage - 9.33) < TOL
+
+
+def test_lethal_plus_twin_linked():
+    """Twin-linked still helps non-crit hits that go to the wound roll; lethal consumes only crits."""
+    d = mk_defender(toughness=8, save=7, unit_size=30)   # wound 6+
+    plain = run(mk_weapon(attacks="30", skill=3, strength=3, ap=0, keywords=["Lethal Hits"]), d)
+    twin  = run(mk_weapon(attacks="30", skill=3, strength=3, ap=0,
+                          keywords=["Lethal Hits", "Twin-linked"]), d)
+    # Lethal converts 1/6 hits to auto-wounds. Twin-linked adds wound rerolls on the remaining
+    # 3/6 (non-crit) hits. Expect a measurable uplift.
+    assert twin.avg_damage > plain.avg_damage * 1.10
+
+
+def test_unit_size_zero_raises():
+    """Guard against pathological input — librarian asserts unit_size >= 1; we match."""
+    with pytest.raises(AssertionError):
+        simulate(SimAttacker("A", 1, [mk_weapon()]),
+                 mk_defender(unit_size=0), n_iter=10, seed=0)

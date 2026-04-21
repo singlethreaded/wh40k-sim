@@ -50,12 +50,24 @@ def _find_kw(keywords: list[str], prefix: str) -> str | None:
     return next((k for k in keywords if k.lower().startswith(prefix.lower())), None)
 
 
-def _parse_trailing_int(kw: str | None, default: int = 0) -> int:
-    """Extract trailing integer from 'Sustained Hits 2' / 'Melta 3'. Bare keyword → default."""
+def _parse_trailing_int(kw: str | None) -> int:
+    """Extract trailing integer from 'Sustained Hits 2' / 'Melta 3'. Bare keyword → 0."""
     if kw is None:
-        return default
+        return 0
     m = re.search(r"(\d+)", kw)
-    return int(m.group(1)) if m else default
+    return int(m.group(1)) if m else 0
+
+
+def _parse_trailing_expr(kw: str | None) -> str:
+    """Extract the trailing parameter of a keyword, preserving dice expressions.
+
+    'Sustained Hits 2' → '2', 'Sustained Hits D3' → 'D3'. Bare/missing → ''.
+    Used for keywords that can carry a dice expression (currently just Sustained).
+    """
+    if kw is None:
+        return ""
+    m = re.search(r"([0-9]*[dD]?[0-9]+(?:\s*[+-]\s*\d+)?)\s*$", kw)
+    return m.group(1).replace(" ", "") if m else ""
 
 
 # --------------------------------------------------------------- plan build ---
@@ -71,7 +83,7 @@ class _WeaponPlan:
     lethal: bool
     devastating: bool
     twin_linked: bool
-    sustained_n: int               # 0 = not sustained
+    sustained_expr: str            # "" = not sustained; "1" / "D3" / "D6" / ...
     rapid_fire_n: int              # 0 = not rapid fire (ranged only)
     melta_bonus: int               # 0 = no melta (ranged only)
     blast: bool                    # adds unit_size // 5 per weapon (ranged only)
@@ -100,10 +112,11 @@ def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
     wound_threshold = min(7, max(2, _wound_target(weapon.strength, defender.toughness) - wound_bonus + wound_penalty))
 
     # Save: AP + cover; Ignores Cover (ranged only) cancels the cover bonus; invuln never gets cover.
+    # 10e floors save threshold at 2+ after cover (cover can't make a 2+ save into a 1+).
     save_bonus = defender.save_bonus_melee if is_melee else defender.save_bonus_ranged
     if not is_melee and _find_kw(kws, "Ignores Cover"):
         save_bonus = 0
-    armour_thr = defender.save - weapon.ap - save_bonus
+    armour_thr = max(2, defender.save - weapon.ap - save_bonus)
     invuln = defender.invuln_melee if is_melee else defender.invuln_ranged
     save_threshold = min(7, invuln if 0 < invuln < armour_thr else armour_thr)
 
@@ -127,7 +140,7 @@ def _build_plan(weapon: SimWeapon, defender: SimDefender) -> _WeaponPlan:
         devastating=_find_kw(kws, "Devastating") is not None,
         twin_linked=(_find_kw(kws, "Twin-linked") is not None
                      or _find_kw(kws, "Twin linked") is not None),
-        sustained_n=_parse_trailing_int(_find_kw(kws, "Sustained"), default=1) if _find_kw(kws, "Sustained") else 0,
+        sustained_expr=_parse_trailing_expr(_find_kw(kws, "Sustained")),
         rapid_fire_n=(_parse_trailing_int(_find_kw(kws, "Rapid Fire")) if not is_melee else 0),
         melta_bonus=(_parse_trailing_int(_find_kw(kws, "Melta"))       if not is_melee else 0),
         blast=(_find_kw(kws, "Blast") is not None and not is_melee),
@@ -186,8 +199,8 @@ def _simulate_once(plans: list[_WeaponPlan], defender: SimDefender, rng: random.
                 lethal_auto_wounds += 1
             else:
                 hits += 1
-                if is_crit and p.sustained_n:
-                    hits += p.sustained_n
+                if is_crit and p.sustained_expr:
+                    hits += roll_expr(p.sustained_expr, rng)
 
         # --- Wound phase ---
         wounds = 0
@@ -196,7 +209,9 @@ def _simulate_once(plans: list[_WeaponPlan], defender: SimDefender, rng: random.
             r = _roll_d6_rerolled(p.wound_threshold, rng, w.reroll_wounds)
             is_crit = (r >= p.crit_wound_threshold)
             success = is_crit or r >= p.wound_threshold
-            if p.twin_linked and not success:
+            # Twin-linked is skipped when the caller already supplies a wound reroll
+            # (matches librarian core.py:_wound_phase — don't stack two rerolls).
+            if p.twin_linked and not success and not w.reroll_wounds:
                 r = rng.randint(1, 6)
                 is_crit = (r >= p.crit_wound_threshold)
                 success = is_crit or r >= p.wound_threshold
@@ -248,6 +263,8 @@ def simulate(
 ) -> SimResult:
     """Monte Carlo estimate of damage output for `attacker` vs `defender`.
     Pass `seed` for reproducible runs."""
+    assert defender.unit_size >= 1, "defender.unit_size must be >= 1"
+    assert defender.wounds >= 1, "defender.wounds must be >= 1"
     rng = random.Random(seed)
     plans = [_build_plan(w, defender) for w in attacker.weapons]
     S = defender.unit_size
